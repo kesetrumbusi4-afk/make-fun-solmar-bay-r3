@@ -1,53 +1,106 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
-
+// Keyboard + mouse input. Keys are tracked by code; actions are edge-triggered
+// (consumed once by the loop) so a single press never fires twice.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
+export const ACTION_ENTER_CAR = 4;
+export const ACTION_MISSION = 8;
+export const ACTION_TAXI = 16;
+export const ACTION_CHECKPOINT = 32;
+export const ACTION_RETRY = 64;
+export const ACTION_MUTE = 128;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const EDGE_KEYS = {
+  Enter: ACTION_CONFIRM,
+  Space: ACTION_CONFIRM,
+  KeyE: ACTION_ENTER_CAR,
+  KeyM: ACTION_MISSION,
+  KeyT: ACTION_TAXI,
+  KeyC: ACTION_CHECKPOINT,
+  KeyR: ACTION_RETRY,
+  KeyP: ACTION_PAUSE,
+  Escape: ACTION_PAUSE,
+  KeyN: ACTION_MUTE,
+};
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+export function createInput(canvas) {
+  const held = new Set();
+  const queue = [];
+  let mouseX = 0;
+  let mouseY = 0;
+  let mouseDown = false;
+  let mouseClicked = false;
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+  function onKeyDown(event) {
+    if (event.repeat) return;
+    held.add(event.code);
+    const action = EDGE_KEYS[event.code];
+    if (action) {
+      queue.push(action);
+      event.preventDefault();
+    }
+  }
+  function onKeyUp(event) {
+    held.delete(event.code);
+  }
+  function onMouseMove(event) {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = event.clientX - rect.left;
+    mouseY = event.clientY - rect.top;
+  }
+  function onMouseDown(event) {
+    onMouseMove(event);
+    mouseDown = true;
+    mouseClicked = true;
+    queue.push(ACTION_CONFIRM);
+  }
+  function onMouseUp() {
+    mouseDown = false;
+  }
+  function onBlur() {
+    held.clear();
+    mouseDown = false;
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mouseup', onMouseUp);
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
+    // -1/0/1 per axis from WASD + arrows.
+    moveX() {
+      const l = held.has('KeyA') || held.has('ArrowLeft') ? 1 : 0;
+      const r = held.has('KeyD') || held.has('ArrowRight') ? 1 : 0;
+      return r - l;
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
+    moveY() {
+      const u = held.has('KeyW') || held.has('ArrowUp') ? 1 : 0;
+      const d = held.has('KeyS') || held.has('ArrowDown') ? 1 : 0;
+      return d - u;
+    },
     takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
+      let actions = 0;
+      while (queue.length) actions |= queue.shift();
+      return actions;
+    },
+    takeClick() {
+      const c = mouseClicked;
+      mouseClicked = false;
+      return c;
+    },
+    get mouseDown() {
+      return mouseDown;
+    },
+    get mouseX() {
+      return mouseX;
+    },
+    get mouseY() {
+      return mouseY;
+    },
+    held(code) {
+      return held.has(code);
     },
   };
 }
